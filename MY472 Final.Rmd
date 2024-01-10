@@ -55,6 +55,7 @@ rs.top100<- c(html_text(rs.top.artist1[1:50]),
 ```
 
 ```{r Spotify API Key, eval=FALSE, include=FALSE}
+#to rerun this code, you will need access to your own Spotify key and replace the location of the Renviron file
 readRenviron("C:/Users/dfxy/OneDrive/Quarter Life Crisis/MY472 - Data for Data Science/Assignments/Spotify Keys.env")
 
 access_token <- get_spotify_access_token()
