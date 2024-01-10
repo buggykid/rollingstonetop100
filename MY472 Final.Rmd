@@ -1,0 +1,442 @@
+---
+title: "**MY472 Final - Topic 3**"
+author: "buggykid"
+date: "2023-12-15"
+output: 
+  rmdformats::downcute:
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+    gallery: false
+    highlight: tango
+    df_print: paged
+---
+<style>
+tr:hover {background-color: teal !important;}
+</style>
+```{r setup, include=FALSE}  
+knitr::opts_chunk$set(echo = FALSE) 
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(spotifyr)
+library(rvest)
+library(RSelenium)
+library(netstat)
+library(grid)
+library(usethis)
+library(kableExtra)
+```
+
+
+
+
+
+```{r Scrapping RS Data, eval=FALSE, include=FALSE}
+#scrapping names from RS website
+#two links are required as there are two separate webpages for the first 50 and second 50 artists
+rs.link1 <- "https://www.rollingstone.com/music/music-lists/100-greatest-artists-147446/"
+rs.link2 <- "https://www.rollingstone.com/music/music-lists/100-greatest-artists-147446/the-band-2-88489/"
+
+#scraping names of artists
+rs.html1 <- read_html(rs.link1) 
+rs.html2 <- read_html(rs.link2) 
+
+rs.top.artist1 <- html_elements(rs.html1, 
+                               css = "h2")
+rs.top.artist2 <- html_elements(rs.html2, 
+                               css = "h2")
+
+rs.top100<- c(html_text(rs.top.artist1[1:50]), 
+              html_text(rs.top.artist2[1:50]))
+
+```
+
+```{r Spotify API Key, eval=FALSE, include=FALSE}
+readRenviron("C:/Users/dfxy/OneDrive/Quarter Life Crisis/MY472 - Data for Data Science/Assignments/Spotify Keys.env")
+
+access_token <- get_spotify_access_token()
+```
+
+```{r RS data, eval=FALSE, include=FALSE}
+##getting spotify id and spotify name of artists
+rs100.id <- as.data.frame(rs.top100) %>% 
+  rename(artist = rs.top100)
+
+rs100.id$spotify_id <- NA
+rs100.id$spotify_name <- NA
+
+for(i in 1:nrow(rs100.id)){
+  artist.temp <- rs100.id$artist[i]
+  
+  #searching artist name and returning first 3 results
+  search.temp <- search_spotify(artist.temp, type = "artist", 
+                                limit = 3, 
+                                authorization = access_token)
+  
+  if(artist.temp == search.temp$name[1]){
+    #if the first result is an exact match, take the id and name from the first result
+    rs100.id$spotify_id[i] <- search.temp$id[1]
+    rs100.id$spotify_name[i] <- search.temp$name[1]
+
+  }else{
+    #else return names of the top 3 search results for users to choose
+    #requires numeric input that corresponds to the position of intended selection
+    for(j in 1:nrow(search.temp)){
+      cat("[", j, "]", search.temp$name[j], "\n")
+    }
+    
+    user.input <- readline(prompt = paste0("Cannot find match for ",
+                                           rs100.id$artist[i], 
+                                           ", please enter desired value:"))
+    #once input received, take id and name from that position
+    rs100.id$spotify_id[i] <- search.temp$id[as.numeric(user.input)]
+    rs100.id$spotify_name[i] <- search.temp$name[as.numeric(user.input)]
+  }
+}
+#Note that after manual searching, 2 special cases were not the first results of the search: 
+#'Hank Williams' and 'Parliament and Funkadelic'
+#To run the code, please input '1' when prompted for all other artists and '2' for 'Hank Williams' and 'Parliament and Funkadelic'.
+
+
+
+## Getting artist basic information
+#get artists function has a limit of 50 inputs, hence doing it twice
+rs100.info1 <- get_artists(rs100.id$spotify_id[1:50], 
+                           authorization = access_token)
+
+rs100.info2 <- get_artists(rs100.id$spotify_id[51:100], 
+                           authorization = access_token)
+
+rs100.info.merge <- rbind(rs100.info1, rs100.info2) %>% 
+  select(name, id, popularity, followers.total, genres) %>% 
+  rename(artist_name = name, 
+         artist_id = id, 
+         artist_popularity = popularity, 
+         artist_followers = followers.total, 
+         artist_genres = genres) %>%
+  mutate(list = "Rolling Stone", 
+         list_ranking = 100:1) #adding in original ranking by rs
+
+
+##Getting top 10 tracks of each artist
+rs100.toptrack <- data.frame()
+for(i in rs100.info.merge$artist_id){
+  toptrack.temp <- get_artist_top_tracks(i, 
+                                         authorization = access_token)
+  toptrack.temp$artist_id <- i
+  
+  rs100.toptrack <- rbind(rs100.toptrack, toptrack.temp)
+}
+
+
+##Getting track features of each artist
+#function will only take 100 inputs at a time 
+#hence for loop has to be adjusted to run only 100 at a time
+rs100.trackft <- data.frame()
+first <- 1
+for(i in 1:(nrow(rs100.toptrack)/100)){
+  last <- i*100
+  track.feature.temp <- get_track_audio_features(rs100.toptrack$id[first:last],
+                         authorization = access_token)
+  rs100.trackft <- rbind(rs100.trackft, track.feature.temp)
+  first <- last + 1
+}
+
+##subsetting interested variables and merging data for rolling stone artists
+rs100.toptrack.clean <- rs100.toptrack %>% 
+  select(artist_id, id, name, popularity, album.release_date) %>% 
+  rename(track_id = id)
+
+rs100.merge <- cbind(rs100.toptrack.clean, rs100.trackft) %>% 
+  left_join(., rs100.info.merge) %>%
+  select(-id)
+
+rs100.merge$album.release_date <- as.Date(rs100.merge$album.release_date)
+
+#saving rds file
+#saveRDS(rs100.merge, file = "rs100_data.RDS")
+```
+
+```{r Spotify data, eval=FALSE, include=FALSE}
+#Manual entry of the top 10 Spotify artist of 2023
+spotify10.names <- c("Taylor Swift", "Bad Bunny", 
+                     "The Weeknd", "Drake", 
+                     "Peso Pluma", "Feid", 
+                     "Travis Scott", "SZA", 
+                     "KAROL G", "Lana Del Rey")
+
+spotify10.id <- as.data.frame(spotify10.names) %>% 
+  rename(artist = spotify10.names)
+
+spotify10.id$spotify_id <- NA
+spotify10.id$spotify_name <- NA
+
+for(i in 1:nrow(spotify10.id)){
+  #searching artist name and returning first 3 results
+  artist.temp <- spotify10.id$artist[i]
+  search.temp <- search_spotify(artist.temp, 
+                                type = "artist", 
+                                limit = 3, 
+                                authorization = access_token)
+  
+  #all first result is an exact match hence interactive input not required
+  if(artist.temp == search.temp$name[1]){
+      spotify10.id$spotify_id[i] <- search.temp$id[1]
+      spotify10.id$spotify_name[i] <- search.temp$name[1]
+
+  }else{NULL}
+}
+
+## Getting artist basic information
+spotify10.info <- get_artists(spotify10.id$spotify_id,
+                              authorization = access_token) %>% 
+  select(name, id, popularity, followers.total, genres) %>% 
+  rename(artist_name = name, 
+         artist_id = id, 
+         artist_popularity = popularity, 
+         artist_followers = followers.total, 
+         artist_genres = genres) %>%
+  mutate(list = "Spotify", 
+         list_ranking = 1:10) #adding in their ranking by spotify
+
+
+##Getting top 10 tracks of each artist
+spotify10.toptrack <- data.frame()
+for(i in spotify10.info$artist_id){
+  toptrack.temp <- get_artist_top_tracks(i, 
+                                         authorization = access_token)
+  toptrack.temp$artist_id <- i
+  
+  spotify10.toptrack <- rbind(spotify10.toptrack, toptrack.temp)
+}
+
+
+##Getting track features of each artist
+spotify10.trackft <- get_track_audio_features(spotify10.toptrack$id, 
+                                              authorization = access_token)
+
+##subsetting interested variables and merging data for rolling stone artists
+spotify10.toptrack.clean <- spotify10.toptrack %>% 
+  select(artist_id, id, name, popularity, album.release_date) %>% 
+  rename(track_id = id)
+
+spotify10.merge <- cbind(spotify10.toptrack.clean, spotify10.trackft) %>% 
+  left_join(., spotify10.info) %>%
+  select(-id)
+
+spotify10.merge$album.release_date <- as.Date(spotify10.merge$album.release_date)
+
+#saving rds file
+#saveRDS(spotify10.merge, file = "spotify10_data.RDS")
+```
+
+```{r Loading Data}
+rs100.df <- readRDS("rs100_data.RDS") #rolling stone top 100 artist data
+spotify10.df <- readRDS("spotify10_data.RDS") #spotify top 10 artist data
+
+merged.df <- rbind(rs100.df, spotify10.df) #merging to 1 df
+
+#creating new variable to further split RS tracks into popular and unpopular
+merged.df$ranked_list <- merged.df$list
+for(i in 1:nrow(merged.df)){
+  if(merged.df$popularity[i] > 75 & merged.df$list[i] == "Rolling Stone"){
+    merged.df$ranked_list[i] <- "Popular RS"
+  } else if(merged.df$list[i] == "Rolling Stone"){
+    merged.df$ranked_list[i] <- "Unpopular RS"
+  } else{NULL}
+}
+
+merged.df$ranked_list <- factor(merged.df$ranked_list, 
+                                levels = c("Spotify", "Popular RS", "Unpopular RS"))
+```
+
+
+# <span style="color: teal;">**Introduction**</span>
+Git Hub Repository: https://github.com/buggykid/rollingstonetop100.git 
+
+I have chosen to tackle topic 3:    
+**"Rolling Stone Magazine ranked their 100 greatest musical artists of all time. At the end of 2023, how has their music endured? Are there any features or characteristics that seem to explain enduring engagement?"**  
+
+
+I will be analysing data obtained from Spotify API for the [100 greatest artists](https://www.rollingstone.com/music/music-lists/100-greatest-artists-147446/) ranked by Rolling Stone Magazine. For each artist, I extracted basic artist information including their top 10 most popular tracks on Spotify. For each track, I also extracted unique track features computed by Spotify. 
+
+On top of that, I extracted similar data for [Spotify's top 10 artist in 2023](https://newsroom.spotify.com/2023-11-29/top-songs-artists-podcasts-albums-trends-2023/) to compare the potential similarities and differences in an attempt to better understand how the 100 greatest artist of all time fair against today's top artists. 
+
+Moving forward, the 100 greatest artists ranked on Rolling Stone and Spotify's top 10 artist of 2023 shall be respectively referred to as **Rolling Stone Artists** (not to be confused with the Rolling Stone Band) and **Spotify Top Artists**.
+
+# <span style="color: teal;">**Data**</span>
+First I scrapped the names of the Rolling Stone Artists from the article. Then I requested access to Spotify's API. With that, I ran each name through Spotify's search function (`search_spotify()`) to obtain each artist's Spotify ID. After securing the IDs, I proceeded to obtain basic artist information, their top 10 tracks, and each track's features respectively with `get_artists()`, `get_artist_top_tracks()`, and `get_track_audio_features()`.  
+
+This process was then repeated for Spotify Top Artists. I saved both data frames as separate RDS file which is provided in the repository (`rs100_data.RDS` & `spotify10_data.RDS`). 
+
+
+# <span style="color: teal;">**Analysis**</span>
+I have broken down the research question into two parts:  
+
+1. How has the music of Rolling Stone Artists been endured at the end of 2023?  
+2. Are there any features or characteristics that seem to explain enduring engagement?  
+
+## **1. How has the music of Rolling Stone Artists been endured at the end of 2023?**
+Spotify computes an artist's popularity from the popularity of all the artist's tracks. The popularity of a track - which is a value between 0-100 - is calculated based on the total number of plays the track has had and how recent those plays are. Note that there is a difference between artist popularity and track popularity.
+
+Artist popularity may not be the best indicator to answer the research question. Since most of Rolling Stone Artists are much older compared to Spotify Top Artists, Rolling stone Artists may have produced much more music - in which not all are popular - dating back longer in comparison. This puts the Rolling Stones Artists at a disadvantage considering how Spotify computes popularity. 
+
+Hence, it would be better to look at the popularity of each artists' top 10 tracks which is illustrated in the graph below with each point being a track:
+
+```{r message=FALSE, warning=FALSE}
+ggplot(merged.df, aes(x = album.release_date, y = popularity)) + 
+  geom_point(aes(color = list)) + 
+  scale_color_manual(values = c("orangered1", "green2")) +
+  #changing background and grid format
+  theme(panel.background = element_rect(fill = "white", 
+                                        colour = "white",
+                                        size = 2, 
+                                        linetype = "solid"),
+        panel.grid.major = element_line(size = 0.5, 
+                                        linetype = 'dotted',
+                                        colour = "grey40",),
+        panel.grid.minor = element_line(size = 0.5, 
+                                        linetype = 'dotted',
+                                        colour = "lightgrey"),
+        axis.line = element_line(colour = "grey")) + 
+  labs(title = "Year and Track Popularity", 
+       y = "Track Popularity", 
+       x = "Year", 
+       color = "Artists")
+```
+
+From the plot, it is clear that there are a number of tracks from the Rolling Stone Artists that are as popular as the tracks of Spotify Top Artists. 
+
+Eyeballing the chart, we can see that most tracks from Spotify Top Artists has a popularity rating of 75 and above. Using 75 as a cut off point, I have summarised the table below to show the total number of tracks that each Rolling Stone Artist has that are above a 75 popularity rating. (This report will not focus on if 75 is a good cut off point.)
+
+```{r message=FALSE, warning=FALSE}
+#filtering tracks with popularity above 75 
+top.rs.tracks <- rs100.df %>% 
+  filter(popularity > 75) %>% 
+  group_by(artist_name, name, list_ranking) %>%  #group by track
+  summarise(popularity = mean(popularity)) %>% 
+  group_by(artist_name) %>% #group by artist
+  summarise(`Rolling Stone Ranking` = mean(list_ranking),
+            `Total Number of Track (>75)` = n()) %>%
+  filter(`Total Number of Track (>75)` > 4) %>% 
+  arrange(desc(`Total Number of Track (>75)`)) %>% 
+  rename(Artist = artist_name) 
+
+#formatting table
+top.rs.tracks %>% 
+  kbl(escape = F) %>%
+  kable_styling(full_width = FALSE) %>% #making sure width of table spans across 
+  kable_material(c("hover")) %>% #adding hover feature
+  row_spec(0, bold=TRUE) #bolding first row
+```
+
+This suggests that tracks of the artists above are as recently and frequently listened to as tracks form the Spotify Top Artists. This is strong evidence that some of the music of the Rolling Stone Artists are still being endured in 2023.  
+
+## **2. Are there any features or characteristics that seem to explain enduring engagement? ** {.tabset}
+For this section, I looked at features and characteristics provided and computed by Spotify for the top 10 tracks of each artist. The variables and their respective definitions are provided in the table below: 
+
+```{r}
+features.name <- c("Acousticness", 
+                   "Danceability", 
+                   "Energy",
+                   "Instrumentalness", 
+                   "Liveness",
+                   "Loudness",
+                   "Speechiness",
+                   "Valence")
+features.explanation <- c("A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic.", 
+                          "Danceability describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.",
+                          "Energy is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy. For example, death metal has high energy, while a Bach prelude scores low on the scale. Perceptual features contributing to this attribute include dynamic range, perceived loudness, timbre, onset rate, and general entropy.", 
+                          "Predicts whether a track contains no vocals. 'Ooh' and 'aah' sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly 'vocal'. The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0.",
+                          "Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live. A value above 0.8 provides strong likelihood that the track is live.",
+                          "The overall loudness of a track in decibels (dB). Loudness values are averaged across the entire track and are useful for comparing relative loudness of tracks. Loudness is the quality of a sound that is the primary psychological correlate of physical strength (amplitude). Values typically range between -60 and 0 db.",
+                          "Speechiness detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book, poetry), the closer to 1.0 the attribute value. Values above 0.66 describe tracks that are probably made entirely of spoken words. Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such cases as rap music. Values below 0.33 most likely represent music and other non-speech-like tracks.",
+                          "A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).")
+
+variables.table <- data.frame(features.name, features.explanation) %>% 
+  rename(Variable = features.name, 
+         Definition = features.explanation)
+
+#formatting table
+variables.table %>% 
+  kbl(escape = F) %>%
+  kable_styling(full_width = FALSE) %>% #making sure width of table spans across 
+  kable_material(c("hover")) %>% #adding hover feature
+  row_spec(0, bold=TRUE) #bolding first row
+```
+
+To understand what are some of the features that contribute to a music's popularity, I will illustrate the distribution of each feature in the boxplots and table below. Instead of two categories, I will further breakdown tracks from the Rolling Stone Artists into popular and unpopular tracks based on the earlier cut off point mentioned above.
+
+### Boxplots
+```{r message=FALSE, warning=FALSE, fig.height=15}
+features.df <- merged.df %>% 
+  rename(Acousticness = acousticness,
+         Danceability = danceability,
+         Energy = energy,
+         Instrumentalness = instrumentalness,
+         Liveness = liveness,
+         Loudness = loudness,
+         Speechiness = speechiness,
+         Valence = valence) %>% 
+  #pivot longer based on features
+  pivot_longer(c("Acousticness", "Danceability", "Energy", "Instrumentalness",
+                 "Liveness", "Loudness", "Speechiness", "Valence"),
+               names_to = "features", 
+               values_to = "value")
+
+
+ggplot(features.df, aes(x = ranked_list, y = value)) +
+  geom_boxplot(aes(fill = ranked_list)) +
+  #adding mean as triangle
+  stat_summary(fun.y="mean", shape = 17) +
+  facet_wrap(~features, ncol = 2, scales = "free_y") +
+  scale_fill_manual(values = c("green2", "orangered1", "red4")) +
+  theme(legend.position = "none",
+        panel.background = element_blank()) +
+  labs(title = "", y = "", x = "ranked_list")
+
+
+```
+
+### Distribution Table
+```{r message=FALSE, warning=FALSE}
+features.table <- features.df %>%
+  group_by(ranked_list, features) %>%
+  summarise(mean = mean(value), 
+            median = median(value)) %>% 
+  #pivoting longer based on mean and median
+  pivot_longer(c("mean","median"), 
+               names_to = "type", 
+               values_to = "value") %>% 
+  #pivoting wider based on ranked list
+  pivot_wider(names_from = "ranked_list", 
+              values_from = "value") %>% 
+  rename(Features = features) %>% 
+  arrange(type, Features) %>% 
+  select(-type)
+
+#formatting table
+features.table %>% 
+  kbl(escape = F) %>%
+  kable_styling(full_width = FALSE) %>% #making sure width of table spans across 
+  kable_material(c("hover")) %>% #adding hover feature
+  row_spec(0, bold=TRUE) %>% #bolding first row
+  #splitting up means and median
+  pack_rows("Mean", 1, 8) %>%
+  pack_rows("Median", 9, 16)
+```
+
+##
+Looking through the plots and the table, it can be observed that Spotify and Popular RS tracks share closer distributions on Acousticness, Energy, Instrumentalness, and Liveness compared to Unpopular RS tracks. This suggests a possibility that the Spotify and Popular RS tracks are hitting a certain 'sweet spot" for these features, contributing to its higher popularity ratings.
+
+
+
+# Appendix: All code in this assignment
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE} 
+# this chunk generates the complete code appendix. 
+# eval=FALSE tells R not to run (``evaluate'') the code here (it was already run before).
+```
