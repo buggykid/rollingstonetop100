@@ -9,3 +9,8 @@ Files:
 2) MY472-Final.html - HTML output of project.
 3) rs100_data.RDS - Dataframe for Rolling Stone Magazine's 100 greatest artists.
 4) spotify10_data.RDS - Dataframe for Spotify's top 10 artist in 2023
+
+
+Special note about reruning the code: 
+To knit the file or to rerun the anlysis, the user can simply load the two rds files without reruning the entire code. 
+If you wish to rerun the entire code, please obtain a valid Spotify API Key. 
